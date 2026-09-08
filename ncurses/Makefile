@@ -1,5 +1,10 @@
 # ncurses for Cosmopolitan Libc — self-contained Makefile
 #
+# The build recipe (configure arguments, minimal.diff, install-time symlinks)
+# is derived from ahgamut/superconfigure's lib/ncurses rules, re-implemented
+# here as a standalone Makefile with no external .mk dependencies.
+# Written with the assistance of Yuanbao (元宝), an AI assistant by Tencent.
+#
 # Lives in <project>/ncurses/, toolchain at <project>/cosmocc/.
 #
 #   make check          # environment self-test (run this first)
