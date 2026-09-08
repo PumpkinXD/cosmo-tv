@@ -1,0 +1,8 @@
+build/
+out/
+*tar.gz
+ncurses/ncurses*/
+cosmocc/
+*.com
+*.dbg
+*.zip

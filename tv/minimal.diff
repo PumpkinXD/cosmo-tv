@@ -1,0 +1,111 @@
+--- a/source/platform/sighandl.cpp
++++ b/source/platform/sighandl.cpp
+@@ -8,12 +8,22 @@
+ {
+ 
+ std::atomic<SignalHandlerCallback *> SignalHandler::callback {nullptr};
+-const int SignalHandler::handledSignals[HandledSignalCount] =
+-    { SIGINT, SIGQUIT, SIGILL, SIGABRT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGTERM, SIGTSTP };
++
++// Cosmopolitan declares the SysV constants whose values differ between host
++// operating systems (SIGBUS, SIGTSTP, SA_*, ...) as objects in .piro.bss that
++// the runtime fills in at startup, not as macros. They are therefore not
++// usable in a constant expression, and must not be read during static
++// initialization -- hence the lazy initialization here.
++const int *SignalHandler::handledSignals() noexcept
++{
++    static const int signos[HandledSignalCount] =
++        { SIGINT, SIGQUIT, SIGILL, SIGABRT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGTERM, SIGTSTP };
++    return signos;
++}
+ 
+ static bool operator==(const struct sigaction &a, const struct sigaction &b) noexcept
+ {
+-    constexpr int knownFlags =
++    const int knownFlags =
+         SA_NOCLDSTOP | SA_NOCLDWAIT | SA_SIGINFO | SA_ONSTACK | SA_RESTART |
+         SA_NODEFER | SA_RESETHAND;
+     return ((a.sa_flags & knownFlags) == (b.sa_flags & knownFlags)) &&
+@@ -26,8 +36,12 @@
+     if (!callback)
+     {
+         struct sigaction sa = makeHandlerAction();
+-        for (int signo : handledSignals)
++        const int *signos = handledSignals();
++        for (int i = 0; i < HandledSignalCount; ++i)
++        {
++            int signo = signos[i];
+             sigaction(signo, &sa, &getHandlerInfo(signo).action);
++        }
+         callback = &aCallback;
+     }
+ }
+@@ -37,8 +51,10 @@
+     if (callback)
+     {
+         callback = nullptr;
+-        for (int signo : handledSignals)
++        const int *signos = handledSignals();
++        for (int i = 0; i < HandledSignalCount; ++i)
+         {
++            int signo = signos[i];
+             auto &handlerInfo = getHandlerInfo(signo);
+             struct sigaction sa = {};
+             sigaction(signo, nullptr, &sa);
+@@ -53,20 +69,18 @@
+ SignalHandler::HandlerInfo &SignalHandler::getHandlerInfo(int signo) noexcept
+ {
+     static HandlerInfo infos[HandledSignalCount];
+-    switch (signo)
+-    {
+-        case SIGINT:    return infos[SigInt];
+-        case SIGQUIT:   return infos[SigQuit];
+-        case SIGILL:    return infos[SigIll];
+-        case SIGABRT:   return infos[SigAbrt];
+-        case SIGBUS:    return infos[SigBus];
+-        case SIGFPE:    return infos[SigFpe];
+-        case SIGSEGV:   return infos[SigSegv];
+-        case SIGPIPE:   return infos[SigPipe];
+-        case SIGTERM:   return infos[SigTerm];
+-        case SIGTSTP:   return infos[SigTstp];
+-        default:        abort();
+-    }
++    // A switch would need constant expressions, which these are not (above).
++    if (signo == SIGINT)  return infos[SigInt];
++    if (signo == SIGQUIT) return infos[SigQuit];
++    if (signo == SIGILL)  return infos[SigIll];
++    if (signo == SIGABRT) return infos[SigAbrt];
++    if (signo == SIGBUS)  return infos[SigBus];
++    if (signo == SIGFPE)  return infos[SigFpe];
++    if (signo == SIGSEGV) return infos[SigSegv];
++    if (signo == SIGPIPE) return infos[SigPipe];
++    if (signo == SIGTERM) return infos[SigTerm];
++    if (signo == SIGTSTP) return infos[SigTstp];
++    abort();
+ }
+ 
+ void SignalHandler::handleSignal(int signo, siginfo_t *info, void *context)
+--- a/include/tvision/internal/sighandl.h
++++ b/include/tvision/internal/sighandl.h
+@@ -27,7 +27,7 @@
+ 
+ public:
+ 
+-    static const int handledSignals[HandledSignalCount];
++    static const int *handledSignals() noexcept;
+ 
+ private:
+ 
+--- a/source/platform/errredir.cpp
++++ b/source/platform/errredir.cpp
+@@ -63,7 +63,9 @@
+ 
+ static void dumpPipe(int src, int dst, size_t size)
+ {
+-    static thread_local char buf alignas(4096) [4096];
++    // Cosmopolitan: bfd caps TLS symbol alignment far below 4096, so this
++    // buffer must not be over-aligned. Alignment is irrelevant here anyway.
++    static thread_local char buf[4096];
+     size_t bytesLeft = size;
+     ssize_t r;
+     while ( bytesLeft > 0 &&
