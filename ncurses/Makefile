@@ -50,7 +50,8 @@ SRC_DIR := $(CURDIR)/ncurses-6.4
 TARBALL := $(CURDIR)/ncurses-6.4.tar.gz
 PATCH   := $(CURDIR)/minimal.diff
 
-OUT_ROOT   := $(CURDIR)/out
+# sysroot; ?= so it can point somewhere else (must agree with tv's COSMOS_ROOT)
+OUT_ROOT   ?= $(PROJ_ROOT)/out
 BUILD_ROOT := $(CURDIR)/build
 
 # shadow tree for wrap mode; lives under build/, never inside cosmocc/
@@ -62,6 +63,10 @@ export PATH
 
 ARCHS   ?= x86_64 aarch64
 MAXPROC ?= $(shell nproc 2>/dev/null || echo 1)
+
+# convenience links: <project>/build/<arch>/{lib,include/...} -> out/<arch>/...
+# Install locations are unchanged; this only adds shortcuts at the root.
+LINK_ROOT ?= $(PROJ_ROOT)/build
 
 # ---- binutils: only ever named <arch>-linux-cosmo-* -----------------------
 LD_X86_64      := $(COSMOCC_BIN)/x86_64-linux-cosmo-ld
@@ -204,9 +209,9 @@ endef
         build build-x86_64 build-aarch64 \
         install install-x86_64 install-aarch64 \
         install-symlinks install-symlinks-x86_64 install-symlinks-aarch64 \
-        clean distclean
+        links links-clean clean distclean
 
-all: build install
+all: build install links
 
 # ===========================================================================
 #  shadow toolchain — only needed by wrap mode
@@ -415,6 +420,24 @@ configure: $(foreach a,$(ARCHS),configure-$(a))
 build:     $(foreach a,$(ARCHS),build-$(a))
 install:   $(foreach a,$(ARCHS),install-$(a))
 install-symlinks: $(foreach a,$(ARCHS),install-symlinks-$(a))
+
+# ===========================================================================
+#  links — shortcuts at the project root, pointing back into out/<arch>
+# ===========================================================================
+links: install
+	@echo "=== linking ncurses into $(LINK_ROOT)/<arch> ==="
+	@for a in $(ARCHS); do \
+		mkdir -p $(LINK_ROOT)/$$a/lib $(LINK_ROOT)/$$a/include; \
+		for f in $(OUT_ROOT)/$$a/lib/*.a; do \
+			[ -e "$$f" ] || continue; \
+			ln -sf "$$f" $(LINK_ROOT)/$$a/lib/; \
+		done; \
+		ln -sfn $(OUT_ROOT)/$$a/include/ncursesw $(LINK_ROOT)/$$a/include/ncursesw; \
+	done
+
+links-clean:
+	@echo "=== removing $(LINK_ROOT)/<arch> ==="
+	@for a in $(ARCHS); do rm -rf $(LINK_ROOT)/$$a; done
 
 clean:
 	@echo "=== removing build/ ==="

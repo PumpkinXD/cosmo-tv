@@ -37,9 +37,10 @@ export COSMOS
 # ---- layout ---------------------------------------------------------------
 NCURSES_DIR ?= $(PROJ_ROOT)/ncurses
 # one sysroot for everything: tvision lands next to ncurses
-COSMOS_ROOT ?= $(NCURSES_DIR)/out
+# must agree with ncurses' OUT_ROOT
+COSMOS_ROOT ?= $(PROJ_ROOT)/out
 
-SRC_DIR    := $(CURDIR)/tvision
+SRC_DIR    ?= $(CURDIR)/tvision
 BUILD_ROOT := $(CURDIR)/build
 PATCH      := $(CURDIR)/minimal.diff
 
@@ -53,6 +54,10 @@ export PATH
 ARCHS   ?= x86_64 aarch64
 MAXPROC ?= $(shell nproc 2>/dev/null || echo 1)
 WITH_EXAMPLES ?= 0
+
+# convenience links: <project>/build/<arch>/{lib,include/...} -> the sysroot
+# Install locations are unchanged; this only adds shortcuts at the root.
+LINK_ROOT ?= $(PROJ_ROOT)/build
 
 # ---- toolchain: cc/c++ only exist as <arch>-unknown-cosmo-*,
 #      binutils only as <arch>-linux-cosmo-* ---------------------------------
@@ -106,21 +111,45 @@ endef
 
 .DEFAULT_GOAL := all
 
-.PHONY: all check patch wrappers configure configure-x86_64 configure-aarch64 \
+.PHONY: all check patch wrappers wrappers-clean configure configure-x86_64 configure-aarch64 \
         build build-x86_64 build-aarch64 \
-        install install-x86_64 install-aarch64 clean distclean
+        install install-x86_64 install-aarch64 \
+        links links-clean clean distclean
 
-all: build install
+all: build install links
 
 # ===========================================================================
 #  shadow toolchain + ncurses, both delegated to the ncurses makefile
 # ===========================================================================
 WRAP_STAMP := $(WRAP_ROOT)/.stamp
 
-$(WRAP_STAMP):
+# cosmocross shells out to <arch>-linux-cosmo-gcc / -g++ next to itself, so
+# those must resolve inside the shadow. Its stamp only tracks cosmocross, so a
+# shadow whose symlinks dangle (project copied or moved, toolchain replaced by
+# whatever manages cosmocc/) would otherwise be reused as-is.
+WRAP_REQUIRED := $(foreach a,$(ARCHS),$(addprefix $(a)-linux-cosmo-,gcc g++))
+
+# phony so the completeness check runs every time; without it the stamp file
+# alone would mark the target up to date and never notice broken symlinks
+.PHONY: wrappers-check
+wrappers-check:
+	@for f in $(notdir $(WRAP_REQUIRED)); do \
+		test -e "$(WRAP_DIR)/$$f" || { \
+			echo "=== shadow incomplete ($$f), rebuilding ==="; \
+			rm -rf $(WRAP_ROOT); break; }; \
+	done
+
+$(WRAP_STAMP): wrappers-check
 	$(MAKE) -C $(NCURSES_DIR) wrappers WRAP_ROOT=$(WRAP_ROOT)
+	@for f in $(notdir $(WRAP_REQUIRED)); do \
+		test -e "$(WRAP_DIR)/$$f" || { \
+			echo "shadow still missing $$f; check $(COSMOCC_BIN)" >&2; exit 1; }; \
+	done
 
 wrappers: $(WRAP_STAMP)
+
+wrappers-clean:
+	@rm -rf $(WRAP_ROOT)
 
 # ===========================================================================
 #  patch — stamp lives in build/ so the source checkout stays clean
@@ -147,6 +176,8 @@ $(PATCH_STAMP): $(PATCH)
 		else \
 			echo "  (partially applied)" >&2; \
 			cd $(SRC_DIR) && patch -p1 --forward --batch < $(PATCH) || true; \
+			git -C $(SRC_DIR) apply --check -R $(PATCH) 2>/dev/null \
+				|| echo "  WARNING: patch may be incomplete" >&2; \
 		fi; \
 	else \
 		cd $(SRC_DIR) && patch -p1 --forward --batch < $(PATCH) || true; \
@@ -175,6 +206,11 @@ check: wrappers
 	    echo "  $$n = $$f"; \
 	  done; \
 	done
+	@echo "=== shadow toolchain ==="
+	@for f in $(notdir $(WRAP_REQUIRED)); do \
+	  if [ -e "$(WRAP_DIR)/$$f" ]; then echo "  $$f ok"; \
+	  else echo "missing $(WRAP_DIR)/$$f" >&2; exit 1; fi; \
+	done
 	@echo "=== ncurses in sysroot ==="
 	@for a in $(ARCHS); do \
 	  p=$(COSMOS_ROOT)/$$a; \
@@ -192,7 +228,7 @@ check: wrappers
 define ARCH_RULES
 COSMOS.$(1)    := $(COSMOS_ROOT)/$(1)
 BUILDD.$(1)    := $(BUILD_ROOT)/$(1)
-NCURSES.$(1)   := $(NCURSES_DIR)/out/$(1)/.installed
+NCURSES.$(1)   := $$(COSMOS.$(1))/.installed
 
 # ncurses is a real prerequisite, not a documented one
 $$(NCURSES.$(1)): $(WRAP_STAMP)
@@ -239,6 +275,27 @@ $(eval $(call ARCH_RULES,aarch64,AARCH64))
 configure: $(foreach a,$(ARCHS),configure-$(a))
 build:     $(foreach a,$(ARCHS),build-$(a))
 install:   $(foreach a,$(ARCHS),install-$(a))
+
+# ===========================================================================
+#  links — shortcuts at the project root, pointing back into the sysroot
+# ===========================================================================
+links: install
+	@echo "=== linking tvision into $(LINK_ROOT)/<arch> ==="
+	@for a in $(ARCHS); do \
+		mkdir -p $(LINK_ROOT)/$$a/lib $(LINK_ROOT)/$$a/include; \
+		for f in libtvision.a; do \
+			f=$(COSMOS_ROOT)/$$a/lib/$$f; \
+			[ -e "$$f" ] || { echo "missing $$f" >&2; exit 1; }; \
+			ln -sf "$$f" $(LINK_ROOT)/$$a/lib/; \
+		done; \
+		ln -sfn $(COSMOS_ROOT)/$$a/include/tvision $(LINK_ROOT)/$$a/include/tvision; \
+	done
+
+links-clean:
+	@echo "=== removing tvision links from $(LINK_ROOT)/<arch> ==="
+	@for a in $(ARCHS); do \
+		rm -f $(LINK_ROOT)/$$a/lib/libtvision.a $(LINK_ROOT)/$$a/include/tvision; \
+	done
 
 clean:
 	@echo "=== removing build/ ==="

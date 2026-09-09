@@ -62,7 +62,7 @@ make -C tv ARCHS=x86_64
 From the repository root(x86_64):
 
 ```sh
-export COSMOS=$PWD/ncurses/out/x86_64
+export COSMOS=$PWD/out/x86_64
 $PWD/build/cosmocc-shadow/bin/x86_64-unknown-cosmo-c++ -o hello.com \
     tv/tvision/hello.cpp -I$COSMOS/include -L$COSMOS/lib \
     -ltvision -lncursesw -ltinfow
