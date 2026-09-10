@@ -2,7 +2,7 @@
 +++ b/source/platform/sighandl.cpp
 @@ -8,12 +8,22 @@
  {
- 
+
  std::atomic<SignalHandlerCallback *> SignalHandler::callback {nullptr};
 -const int SignalHandler::handledSignals[HandledSignalCount] =
 -    { SIGINT, SIGQUIT, SIGILL, SIGABRT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGTERM, SIGTSTP };
@@ -18,7 +18,7 @@
 +        { SIGINT, SIGQUIT, SIGILL, SIGABRT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGTERM, SIGTSTP };
 +    return signos;
 +}
- 
+
  static bool operator==(const struct sigaction &a, const struct sigaction &b) noexcept
  {
 -    constexpr int knownFlags =
@@ -83,23 +83,23 @@
 +    if (signo == SIGTSTP) return infos[SigTstp];
 +    abort();
  }
- 
+
  void SignalHandler::handleSignal(int signo, siginfo_t *info, void *context)
 --- a/include/tvision/internal/sighandl.h
 +++ b/include/tvision/internal/sighandl.h
 @@ -27,7 +27,7 @@
- 
+
  public:
- 
+
 -    static const int handledSignals[HandledSignalCount];
 +    static const int *handledSignals() noexcept;
- 
+
  private:
- 
+
 --- a/source/platform/errredir.cpp
 +++ b/source/platform/errredir.cpp
 @@ -63,7 +63,9 @@
- 
+
  static void dumpPipe(int src, int dst, size_t size)
  {
 -    static thread_local char buf alignas(4096) [4096];
@@ -109,3 +109,23 @@
      size_t bytesLeft = size;
      ssize_t r;
      while ( bytesLeft > 0 &&
+--- a/source/tvision/tinputli.cpp
++++ b/source/tvision/tinputli.cpp
+@@ -50,7 +50,17 @@
+ TStringView hotKeyStr( TStringView s ) noexcept
+ {
++    // Cosmopolitan(4.0.2)'s memchr() loads an aligned vector from (uintptr_t)s & -16
++    // (or & -32 on AVX2) before ever looking at 'n', so memchr(NULL, c, 0)
++    // dereferences address 0 and traps with SIGSEGV, whereas glibc returns
++    // NULL without touching 's'. Passing a null pointer is undefined behaviour
++    // regardless of 'n', and menu separators (newLine() items, whose 'name' is
++    // null) do reach this function via TMenuView::findItem, so bail out early.
++    // This also covers hotKey(), which has further callers (TButton, TLabel,
++    // TCluster) that may pass empty text.
++    if (s.empty())
++        return TStringView();
+     const char *begin = (const char *) memchr( s.begin(), '~', s.size() );
+     if( begin != 0 )
+         {
+         begin += 1; // Skip the '~'.
+         const char *end = (const char *) memchr( begin, '~', s.end() - begin );

@@ -16,6 +16,11 @@
 # objects in .piro.bss filled in at startup, not macros, so tvision's
 # constexpr/switch/case uses of them do not compile. See the patch itself.
 #
+# minimal.diff also guards hotKeyStr() against empty strings: Cosmopolitan(4.0.2)'s
+# memchr() loads an aligned vector from (uintptr_t)s & -16 before looking at
+# 'n', so memchr(NULL, c, 0) — which menu separators reach via
+# TMenuView::findItem — traps with SIGSEGV instead of returning NULL.
+#
 # C++ needs CC_MODE=wrap: cosmocross adds -isystem .../include/third_party/libcxx
 # and -lcxx for -*c++ invocations. raw mode would have to replicate both by hand.
 #
@@ -134,16 +139,16 @@ WRAP_REQUIRED := $(foreach a,$(ARCHS),$(addprefix $(a)-linux-cosmo-,gcc g++))
 .PHONY: wrappers-check
 wrappers-check:
 	@for f in $(notdir $(WRAP_REQUIRED)); do \
-		test -e "$(WRAP_DIR)/$$f" || { \
-			echo "=== shadow incomplete ($$f), rebuilding ==="; \
-			rm -rf $(WRAP_ROOT); break; }; \
+	  test -e "$(WRAP_DIR)/$$f" || { \
+	    echo "=== shadow incomplete ($$f), rebuilding ==="; \
+	    rm -rf $(WRAP_ROOT); break; }; \
 	done
 
 $(WRAP_STAMP): wrappers-check
 	$(MAKE) -C $(NCURSES_DIR) wrappers WRAP_ROOT=$(WRAP_ROOT)
 	@for f in $(notdir $(WRAP_REQUIRED)); do \
-		test -e "$(WRAP_DIR)/$$f" || { \
-			echo "shadow still missing $$f; check $(COSMOCC_BIN)" >&2; exit 1; }; \
+	  test -e "$(WRAP_DIR)/$$f" || { \
+	    echo "shadow still missing $$f; check $(COSMOCC_BIN)" >&2; exit 1; }; \
 	done
 
 wrappers: $(WRAP_STAMP)
@@ -165,23 +170,41 @@ else
 # git apply can tell clean / already-applied / partially-applied apart, so
 # prefer it; patch(1) is the fallback and, unlike git, drops *.rej files into
 # the source tree whenever it skips a hunk.
+#
+# patch(1) is tried twice on purpose. source/tvision/tinputli.cpp is CRLF
+# upstream, and plain patch(1) strips the CRs from the patch before matching,
+# so it succeeds only on an LF-normalized checkout; --binary keeps them and
+# succeeds only on a CRLF one. Neither flag alone covers both, so the second
+# attempt is made only if the guard is still missing. Note that --batch exits
+# non-zero whenever it skips already-applied hunks, which is the normal case
+# here, so its status is deliberately ignored.
+# (git apply has no such problem: it applies the CRLF hunk as-is.)
 $(PATCH_STAMP): $(PATCH)
 	@echo "=== patching tvision ==="
 	@mkdir -p $(BUILD_ROOT)
 	@if git -C $(SRC_DIR) rev-parse --git-dir >/dev/null 2>&1; then \
-		if git -C $(SRC_DIR) apply --check $(PATCH) 2>/dev/null; then \
-			git -C $(SRC_DIR) apply $(PATCH); \
-		elif git -C $(SRC_DIR) apply --check -R $(PATCH) 2>/dev/null; then \
-			echo "  (already applied)"; \
-		else \
-			echo "  (partially applied)" >&2; \
-			cd $(SRC_DIR) && patch -p1 --forward --batch < $(PATCH) || true; \
-			git -C $(SRC_DIR) apply --check -R $(PATCH) 2>/dev/null \
-				|| echo "  WARNING: patch may be incomplete" >&2; \
-		fi; \
+	  if git -C $(SRC_DIR) apply --check $(PATCH) 2>/dev/null; then \
+	    git -C $(SRC_DIR) apply $(PATCH); \
+	  elif git -C $(SRC_DIR) apply --check -R $(PATCH) 2>/dev/null; then \
+	    echo "  (already applied)"; \
+	  else \
+	    echo "  (partially applied)" >&2; \
+	    cd $(SRC_DIR) && patch -p1 --forward --batch --binary < $(PATCH) || true; \
+	    grep -q 's\.empty()' $(SRC_DIR)/source/tvision/tinputli.cpp 2>/dev/null \
+	      || { cd $(SRC_DIR) && patch -p1 --forward --batch < $(PATCH) || true; }; \
+	    git -C $(SRC_DIR) apply --check -R $(PATCH) 2>/dev/null \
+	      || echo "  WARNING: patch may be incomplete" >&2; \
+	  fi; \
 	else \
-		cd $(SRC_DIR) && patch -p1 --forward --batch < $(PATCH) || true; \
+	  cd $(SRC_DIR) && patch -p1 --forward --batch --binary < $(PATCH) || true; \
+	  grep -q 's\.empty()' $(SRC_DIR)/source/tvision/tinputli.cpp 2>/dev/null \
+	    || { cd $(SRC_DIR) && patch -p1 --forward --batch < $(PATCH) || true; }; \
 	fi
+# '|| true' above makes a skipped hunk non-fatal, and the warning is easy to
+# miss in a long build. Fail loudly instead: 's.empty()' occurs only in the
+# hotKeyStr guard this patch adds (the file otherwise has just 'p.empty()').
+	@grep -q 's\.empty()' $(SRC_DIR)/source/tvision/tinputli.cpp \
+	  || { echo "  ERROR: hotKeyStr guard not applied" >&2; exit 1; }
 	@find $(SRC_DIR) \( -name '*.rej' -o -name '*.orig' \) -delete
 	@touch $@
 endif
@@ -238,13 +261,13 @@ $$(BUILDD.$(1))/.configured: $$(NCURSES.$(1)) $(PATCH_STAMP)
 	@echo "=== configure $(1) ==="
 	@mkdir -p $$(BUILDD.$(1))
 	cd $$(BUILDD.$(1)) && \
-		ARCH=$(1) MODE=$(1) \
-		CC="$(CC_$(2))" CXX="$(CXX_$(2))" \
-		AR="$(AR_$(2))" RANLIB="$(RANLIB_$(2))" \
-		LD="$(LD_$(2))" STRIP="$(STRIP_$(2))" \
-		COSMOS=$$(COSMOS.$(1)) COSMOCC=$(COSMOCC_ROOT) \
-		PKG_CONFIG_LIBDIR=$$(COSMOS.$(1))/lib/pkgconfig \
-		cmake $(SRC_DIR) $(call CMAKE_ARGS,$(1))
+	  ARCH=$(1) MODE=$(1) \
+	  CC="$(CC_$(2))" CXX="$(CXX_$(2))" \
+	  AR="$(AR_$(2))" RANLIB="$(RANLIB_$(2))" \
+	  LD="$(LD_$(2))" STRIP="$(STRIP_$(2))" \
+	  COSMOS=$$(COSMOS.$(1)) COSMOCC=$(COSMOCC_ROOT) \
+	  PKG_CONFIG_LIBDIR=$$(COSMOS.$(1))/lib/pkgconfig \
+	  cmake $(SRC_DIR) $(call CMAKE_ARGS,$(1))
 	@touch $$@
 
 configure-$(1): $$(BUILDD.$(1))/.configured
@@ -252,8 +275,8 @@ configure-$(1): $$(BUILDD.$(1))/.configured
 $$(BUILDD.$(1))/.built: $$(BUILDD.$(1))/.configured
 	@echo "=== build $(1) ==="
 	cd $$(BUILDD.$(1)) && \
-		export COSMOS=$$(COSMOS.$(1)) && \
-		cmake --build . --parallel $(MAXPROC)
+	  export COSMOS=$$(COSMOS.$(1)) && \
+	  cmake --build . --parallel $(MAXPROC)
 	@touch $$@
 
 build-$(1): $$(BUILDD.$(1))/.built
@@ -261,8 +284,8 @@ build-$(1): $$(BUILDD.$(1))/.built
 $$(COSMOS.$(1))/.tvision-installed: $$(BUILDD.$(1))/.built
 	@echo "=== install $(1) -> $$(COSMOS.$(1)) ==="
 	cd $$(BUILDD.$(1)) && \
-		export COSMOS=$$(COSMOS.$(1)) && \
-		cmake --install .
+	  export COSMOS=$$(COSMOS.$(1)) && \
+	  cmake --install .
 	@touch $$@
 
 install-$(1): $$(COSMOS.$(1))/.tvision-installed
@@ -282,19 +305,19 @@ install:   $(foreach a,$(ARCHS),install-$(a))
 links: install
 	@echo "=== linking tvision into $(LINK_ROOT)/<arch> ==="
 	@for a in $(ARCHS); do \
-		mkdir -p $(LINK_ROOT)/$$a/lib $(LINK_ROOT)/$$a/include; \
-		for f in libtvision.a; do \
-			f=$(COSMOS_ROOT)/$$a/lib/$$f; \
-			[ -e "$$f" ] || { echo "missing $$f" >&2; exit 1; }; \
-			ln -sf "$$f" $(LINK_ROOT)/$$a/lib/; \
-		done; \
-		ln -sfn $(COSMOS_ROOT)/$$a/include/tvision $(LINK_ROOT)/$$a/include/tvision; \
+	  mkdir -p $(LINK_ROOT)/$$a/lib $(LINK_ROOT)/$$a/include; \
+	  for f in libtvision.a; do \
+	    f=$(COSMOS_ROOT)/$$a/lib/$$f; \
+	    [ -e "$$f" ] || { echo "missing $$f" >&2; exit 1; }; \
+	    ln -sf "$$f" $(LINK_ROOT)/$$a/lib/; \
+	  done; \
+	  ln -sfn $(COSMOS_ROOT)/$$a/include/tvision $(LINK_ROOT)/$$a/include/tvision; \
 	done
 
 links-clean:
 	@echo "=== removing tvision links from $(LINK_ROOT)/<arch> ==="
 	@for a in $(ARCHS); do \
-		rm -f $(LINK_ROOT)/$$a/lib/libtvision.a $(LINK_ROOT)/$$a/include/tvision; \
+	  rm -f $(LINK_ROOT)/$$a/lib/libtvision.a $(LINK_ROOT)/$$a/include/tvision; \
 	done
 
 clean:
@@ -304,6 +327,6 @@ clean:
 distclean: clean
 	@echo "=== removing installed tvision from sysroot ==="
 	@for a in $(ARCHS); do \
-		rm -f $(COSMOS_ROOT)/$$a/lib/libtvision.a $(COSMOS_ROOT)/$$a/.tvision-installed; \
-		rm -rf $(COSMOS_ROOT)/$$a/include/tvision $(COSMOS_ROOT)/$$a/lib/cmake/tvision; \
+	  rm -f $(COSMOS_ROOT)/$$a/lib/libtvision.a $(COSMOS_ROOT)/$$a/.tvision-installed; \
+	  rm -rf $(COSMOS_ROOT)/$$a/include/tvision $(COSMOS_ROOT)/$$a/lib/cmake/tvision; \
 	done
