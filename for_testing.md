@@ -8,7 +8,7 @@ Cosmopolitan toolchain, either as a real directory or as a symlink to one:
 ```sh
 # A) download it here
 curl -o cosmocc.zip https://cosmo.zip/pub/cosmocc/cosmocc.zip
-unzip cosmocc.zip        # -> ./cosmocc/{bin,include,<arch>-linux-cosmo}
+unzip cosmocc.zip -d cosmocc        # -> ./cosmocc/{bin,include,<arch>-linux-cosmo}
 
 # B) or point at a toolchain you already manage (xmake, system install, ...)
 ln -s /path/to/your/cosmocc ./cosmocc

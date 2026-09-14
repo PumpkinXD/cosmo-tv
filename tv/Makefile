@@ -21,6 +21,11 @@
 # 'n', so memchr(NULL, c, 0) — which menu separators reach via
 # TMenuView::findItem — traps with SIGSEGV instead of returning NULL.
 #
+# That hunk touches source/tvision/tinputli.cpp, which is CRLF upstream. GNU
+# patch reports "different line endings" and skips the hunk unless the patch
+# and the file agree, and no single flag matches both ways, so the file is
+# normalized to LF first and the patch is kept all-LF. See the patch rule.
+#
 # C++ needs CC_MODE=wrap: cosmocross adds -isystem .../include/third_party/libcxx
 # and -lcxx for -*c++ invocations. raw mode would have to replicate both by hand.
 #
@@ -171,17 +176,16 @@ else
 # prefer it; patch(1) is the fallback and, unlike git, drops *.rej files into
 # the source tree whenever it skips a hunk.
 #
-# patch(1) is tried twice on purpose. source/tvision/tinputli.cpp is CRLF
-# upstream, and plain patch(1) strips the CRs from the patch before matching,
-# so it succeeds only on an LF-normalized checkout; --binary keeps them and
-# succeeds only on a CRLF one. Neither flag alone covers both, so the second
-# attempt is made only if the guard is still missing. Note that --batch exits
-# non-zero whenever it skips already-applied hunks, which is the normal case
-# here, so its status is deliberately ignored.
-# (git apply has no such problem: it applies the CRLF hunk as-is.)
+# source/tvision/tinputli.cpp is CRLF upstream while the patch is LF. GNU
+# patch reports "different line endings" and skips the hunk when they
+# disagree; --binary keeps the patch's CRs and plain mode strips them, so
+# neither matches a file whose convention is unknown at authoring time.
+# Normalizing the file to LF up front makes one attempt enough and works
+# whatever the checkout does.
 $(PATCH_STAMP): $(PATCH)
 	@echo "=== patching tvision ==="
 	@mkdir -p $(BUILD_ROOT)
+	@sed -i 's/\r$$//' $(SRC_DIR)/source/tvision/tinputli.cpp
 	@if git -C $(SRC_DIR) rev-parse --git-dir >/dev/null 2>&1; then \
 	  if git -C $(SRC_DIR) apply --check $(PATCH) 2>/dev/null; then \
 	    git -C $(SRC_DIR) apply $(PATCH); \
@@ -189,16 +193,12 @@ $(PATCH_STAMP): $(PATCH)
 	    echo "  (already applied)"; \
 	  else \
 	    echo "  (partially applied)" >&2; \
-	    cd $(SRC_DIR) && patch -p1 --forward --batch --binary < $(PATCH) || true; \
-	    grep -q 's\.empty()' $(SRC_DIR)/source/tvision/tinputli.cpp 2>/dev/null \
-	      || { cd $(SRC_DIR) && patch -p1 --forward --batch < $(PATCH) || true; }; \
+	    cd $(SRC_DIR) && patch -p1 --forward --batch < $(PATCH) || true; \
 	    git -C $(SRC_DIR) apply --check -R $(PATCH) 2>/dev/null \
 	      || echo "  WARNING: patch may be incomplete" >&2; \
 	  fi; \
 	else \
-	  cd $(SRC_DIR) && patch -p1 --forward --batch --binary < $(PATCH) || true; \
-	  grep -q 's\.empty()' $(SRC_DIR)/source/tvision/tinputli.cpp 2>/dev/null \
-	    || { cd $(SRC_DIR) && patch -p1 --forward --batch < $(PATCH) || true; }; \
+	  cd $(SRC_DIR) && patch -p1 --forward --batch < $(PATCH) || true; \
 	fi
 # '|| true' above makes a skipped hunk non-fatal, and the warning is easy to
 # miss in a long build. Fail loudly instead: 's.empty()' occurs only in the
