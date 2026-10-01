@@ -63,7 +63,7 @@ export PATH
 
 ARCHS   ?= x86_64 aarch64
 MAXPROC ?= $(shell nproc 2>/dev/null || echo 1)
-WITH_EXAMPLES ?= 0
+WITH_EXAMPLES ?= 1
 
 # convenience links: <project>/build/<arch>/{lib,include/...} -> the sysroot
 # Install locations are unchanged; this only adds shortcuts at the root.

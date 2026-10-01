@@ -70,7 +70,7 @@
 -        case SIGTSTP:   return infos[SigTstp];
 -        default:        abort();
 -    }
-+    // A switch would need constant expressions, which these are not (above).
++    // A switch would need constant expressions, which these are not (in Cosmopolitan LibC).
 +    if (signo == SIGINT)  return infos[SigInt];
 +    if (signo == SIGQUIT) return infos[SigQuit];
 +    if (signo == SIGILL)  return infos[SigIll];
